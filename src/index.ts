@@ -1,5 +1,6 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText } from 'ai';
+import { generateObject, generateText } from 'ai';
+import { z } from 'zod';
 
 const INTERACTION_ID_HEADER = 'X-Interaction-Id';
 
@@ -48,11 +49,52 @@ export default {
 					answer: result.text || 'N/A',
 				});
 			}
+			case 'JSON_MODE': {
+				if (!env.DEV_SHOWDOWN_API_KEY) {
+					throw new Error('DEV_SHOWDOWN_API_KEY is required');
+				}
+
+				const workshopLlm = createWorkshopLlm(env.DEV_SHOWDOWN_API_KEY, interactionId);
+				const result = await generateObject({
+					model: workshopLlm.chatModel('deli-4'),
+					schema: productSchema,
+					system:
+						'Extract structured product information from the given description. Populate every field using the facts present in the text. Copy values verbatim; do not invent, infer, or round.',
+					prompt: payload.description,
+				});
+
+				return Response.json(result.object);
+			}
 				default:
 					return new Response('Solver not found', { status: 404 });
 			}
 		},
 	} satisfies ExportedHandler<Env>;
+
+const productSchema = z.object({
+	name: z.string().describe('Full product name including any model identifier'),
+	price: z.object({
+		amount: z.number(),
+		currency: z.string().describe('ISO 4217 currency code, e.g. EUR, USD'),
+	}),
+	inStock: z.boolean(),
+	dimensions: z.object({
+		length: z.number(),
+		width: z.number(),
+		height: z.number(),
+		unit: z.string().describe('Unit of length, e.g. cm, mm, in'),
+	}),
+	weight: z.object({
+		value: z.number(),
+		unit: z.string().describe('Unit of mass, e.g. kg, g, lb'),
+	}),
+	manufacturer: z.object({
+		name: z.string(),
+		country: z.string(),
+		website: z.string(),
+	}),
+	warrantyMonths: z.number().describe('Warranty duration expressed in months'),
+});
 
 function createWorkshopLlm(apiKey: string, interactionId: string) {
 	return createOpenAICompatible({
